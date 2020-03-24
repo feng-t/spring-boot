@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.GZIPInputStream;
@@ -66,6 +67,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
+import org.apache.catalina.webresources.TomcatURLStreamHandlerFactory;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.InputStreamFactory;
 import org.apache.http.client.protocol.HttpClientContext;
@@ -110,6 +112,7 @@ import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.ClassUtils;
 import org.springframework.util.FileCopyUtils;
 import org.springframework.util.SocketUtils;
 import org.springframework.util.StreamUtils;
@@ -119,6 +122,7 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatIOException;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -157,6 +161,15 @@ public abstract class AbstractServletWebServerFactoryTests {
 			catch (Exception ex) {
 				// Ignore
 			}
+		}
+	}
+
+	@After
+	public void clearUrlStreamHandlerFactory() {
+		if (ClassUtils.isPresent("org.apache.catalina.webresources.TomcatURLStreamHandlerFactory",
+				getClass().getClassLoader())) {
+			ReflectionTestUtils.setField(TomcatURLStreamHandlerFactory.class, "instance", null);
+			ReflectionTestUtils.setField(URL.class, "factory", null);
 		}
 	}
 
@@ -248,10 +261,13 @@ public abstract class AbstractServletWebServerFactoryTests {
 	@Test
 	public void specificPort() throws Exception {
 		AbstractServletWebServerFactory factory = getFactory();
-		int specificPort = SocketUtils.findAvailableTcpPort(41000);
-		factory.setPort(specificPort);
-		this.webServer = factory.getWebServer(exampleServletRegistration());
-		this.webServer.start();
+		int specificPort = doWithRetry(() -> {
+			int port = SocketUtils.findAvailableTcpPort(41000);
+			factory.setPort(port);
+			this.webServer = factory.getWebServer(exampleServletRegistration());
+			this.webServer.start();
+			return port;
+		});
 		assertThat(getResponse("http://localhost:" + specificPort + "/hello")).isEqualTo("Hello World");
 		assertThat(this.webServer.getPort()).isEqualTo(specificPort);
 	}
@@ -406,6 +422,17 @@ public abstract class AbstractServletWebServerFactoryTests {
 		String response = getResponse(getLocalUrl("https", "/hello"),
 				new HttpComponentsClientHttpRequestFactory(httpClient));
 		assertThat(response).contains("scheme=https");
+	}
+
+	@Test
+	public void sslWithInvalidAliasFailsDuringStartup() {
+		AbstractServletWebServerFactory factory = getFactory();
+		Ssl ssl = getSsl(null, "password", "test-alias-404", "src/test/resources/test.jks");
+		factory.setSsl(ssl);
+		ServletRegistrationBean<ExampleServlet> registration = new ServletRegistrationBean<>(
+				new ExampleServlet(true, false), "/hello");
+		assertThatThrownBy(() -> factory.getWebServer(registration).start())
+				.hasStackTraceContaining("Keystore does not contain specified alias 'test-alias-404'");
 	}
 
 	@Test
@@ -579,7 +606,7 @@ public abstract class AbstractServletWebServerFactoryTests {
 		return getSsl(clientAuth, keyPassword, keyStore, null, null, null);
 	}
 
-	private Ssl getSsl(ClientAuth clientAuth, String keyPassword, String keyAlias, String keyStore) {
+	protected Ssl getSsl(ClientAuth clientAuth, String keyPassword, String keyAlias, String keyStore) {
 		return getSsl(clientAuth, keyPassword, keyAlias, keyStore, null, null, null);
 	}
 
@@ -822,7 +849,7 @@ public abstract class AbstractServletWebServerFactoryTests {
 	}
 
 	@Test
-	public void portClashOfPrimaryConnectorResultsInPortInUseException() throws IOException {
+	public void portClashOfPrimaryConnectorResultsInPortInUseException() throws Exception {
 		doWithBlockedPort((port) -> {
 			assertThatExceptionOfType(RuntimeException.class).isThrownBy(() -> {
 				AbstractServletWebServerFactory factory = getFactory();
@@ -834,7 +861,7 @@ public abstract class AbstractServletWebServerFactoryTests {
 	}
 
 	@Test
-	public void portClashOfSecondaryConnectorResultsInPortInUseException() throws IOException {
+	public void portClashOfSecondaryConnectorResultsInPortInUseException() throws Exception {
 		doWithBlockedPort((port) -> {
 			assertThatExceptionOfType(RuntimeException.class).isThrownBy(() -> {
 				AbstractServletWebServerFactory factory = getFactory();
@@ -1073,7 +1100,6 @@ public abstract class AbstractServletWebServerFactoryTests {
 			HttpComponentsClientHttpRequestFactory requestFactory, String... headers)
 			throws IOException, URISyntaxException {
 		ClientHttpRequest request = requestFactory.createRequest(new URI(url), method);
-		request.getHeaders().add("Cookie", "JSESSIONID=" + "123");
 		for (String header : headers) {
 			String[] parts = header.split(":");
 			request.getHeaders().add(parts[0], parts[1]);
@@ -1129,19 +1155,28 @@ public abstract class AbstractServletWebServerFactoryTests {
 		return bean;
 	}
 
-	protected final void doWithBlockedPort(BlockedPortAction action) throws IOException {
-		int port = SocketUtils.findAvailableTcpPort(40000);
-		ServerSocket serverSocket = new ServerSocket();
+	private <T> T doWithRetry(Callable<T> action) throws Exception {
+		Exception lastFailure = null;
 		for (int i = 0; i < 10; i++) {
 			try {
-				serverSocket.bind(new InetSocketAddress(port));
-				break;
+				return action.call();
 			}
 			catch (Exception ex) {
+				lastFailure = ex;
 			}
 		}
+		throw new IllegalStateException("Action was not successful in 10 attempts", lastFailure);
+	}
+
+	protected final void doWithBlockedPort(BlockedPortAction action) throws Exception {
+		ServerSocket serverSocket = new ServerSocket();
+		int blockedPort = doWithRetry(() -> {
+			int port = SocketUtils.findAvailableTcpPort(40000);
+			serverSocket.bind(new InetSocketAddress(port));
+			return port;
+		});
 		try {
-			action.run(port);
+			action.run(blockedPort);
 		}
 		finally {
 			serverSocket.close();

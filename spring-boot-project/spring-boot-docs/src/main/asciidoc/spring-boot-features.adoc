@@ -42,7 +42,11 @@ When your application starts, you should see something similar to the following 
 
 By default, `INFO` logging messages are shown, including some relevant startup details, such as the user that launched the application.
 If you need a log level other than `INFO`, you can set it, as described in <<boot-features-custom-log-levels>>.
+The application version is determined using the implementation version from the main application class's package.
+Startup information logging can be turned off by setting `spring.main.log-startup-info` to `false`.
+This will also turn off logging of the application's active profiles.
 
+TIP: To add additional logging during startup, you can override `logStartupInfo(boolean)` in a subclass of `SpringApplication`.
 
 
 [[boot-features-startup-failure]]
@@ -348,6 +352,8 @@ Properties are considered in the following order:
 . Application properties outside of your packaged jar (`application.properties` and YAML variants).
 . Application properties packaged inside your jar (`application.properties` and YAML variants).
 . {spring-framework-api}/context/annotation/PropertySource.html[`@PropertySource`] annotations on your `@Configuration` classes.
+  Please note that such property sources are not added to the `Environment` until the application context is being refreshed.
+  This is too late to configure certain properties such as `+logging.*+` and `+spring.main.*+` which are read before refresh begins.
 . Default properties (specified by setting `SpringApplication.setDefaultProperties`).
 
 To provide a concrete example, suppose you develop a `@Component` that uses a `name` property, as shown in the following example:
@@ -787,9 +793,7 @@ The preceding POJO defines the following properties:
 * `acme.security.password`.
 * `acme.security.roles`, with a collection of `String`.
 
-NOTE: Spring Boot auto-configuration heavily makes use of `@ConfigurationProperties` for easily configuring auto-configured beans.
-Similar to auto-configuration classes, `@ConfigurationProperties` classes available in Spring Boot are for internal use only.
-The properties that map to the class, which are configured via properties files, YAML files, environment variables etc., are public API but the content of the class itself is not meant to be used directly.
+NOTE: The properties that map to `@ConfigurationProperties` classes available in Spring Boot, which are configured via properties files, YAML files, environment variables etc., are public API but the accessors (getters/setters) of the class itself are not meant to be used directly.
 
 [NOTE]
 ====
@@ -1000,6 +1004,8 @@ For example, consider binding the following properties to a `Map`:
 ----
 
 The properties above will bind to a `Map` with `/key1`, `/key2` and `key3` as the keys in the map.
+
+NOTE: For YAML files, the brackets need to be surrounded by quotes for the keys to be parsed properly.
 
 
 [[boot-features-external-config-complex-type-merge]]
@@ -1215,8 +1221,7 @@ To do so, ensure that a compliant JSR-303 implementation is on your classpath an
 
 TIP: You can also trigger validation by annotating the `@Bean` method that creates the configuration properties with `@Validated`.
 
-Although nested properties will also be validated when bound, it's good practice to also annotate the associated field as `@Valid`.
-This ensures that validation is triggered even if no nested properties are found.
+To ensure that validation is always triggered for nested properties, even when no properties are found, the associated field must be annotated with `@Valid`.
 The following example builds on the preceding `AcmeProperties` example:
 
 [source,java,indent=0]
@@ -1370,6 +1375,8 @@ TIP: There are a lot of logging frameworks available for Java.
 Do not worry if the above list seems confusing.
 Generally, you do not need to change your logging dependencies and the Spring Boot defaults work just fine.
 
+TIP: When you deploy your application to a servlet container or application server, logging performed via the Java Util Logging API is not routed into your application's logs.
+This prevents logging performed by the container or other applications that have been deployed to it from appearing in your application's logs.
 
 
 [[boot-features-logging-format]]
@@ -2675,7 +2682,10 @@ Here are a few examples of Filters and their respective order (lower order value
 
 It is usually safe to leave Filter beans unordered.
 
-If a specific order is required, you should avoid configuring a Filter that reads the request body at `Ordered.HIGHEST_PRECEDENCE`, since it might go against the character encoding configuration of your application.
+If a specific order is required, you should annotate the `Filter` with `@Order` or make it implement `Ordered`.
+You cannot configure the order of a `Filter` by annotating its bean method with `@Order`.
+If you cannot change the `Filter` class to add `@Order` or implement `Ordered`, you must define a `FilterRegistrationBean` for the `Filter` and set the registration bean's order using the `setOrder(int)` method.
+Avoid configuring a Filter that reads the request body at `Ordered.HIGHEST_PRECEDENCE`, since it might go against the character encoding configuration of your application.
 If a Servlet filter wraps the request, it should be configured with an order that is less than or equal to `OrderedFilter.REQUEST_WRAPPER_FILTER_MAX_ORDER`.
 
 WARNING: Take care when registering `Filter` beans since they are initialized very early in the application lifectyle.
@@ -2913,7 +2923,7 @@ You can register multiple OAuth2 clients and providers under the `spring.securit
 	spring.security.oauth2.client.registration.my-client-1.client-name=Client for user scope
 	spring.security.oauth2.client.registration.my-client-1.provider=my-oauth-provider
 	spring.security.oauth2.client.registration.my-client-1.scope=user
-	spring.security.oauth2.client.registration.my-client-1.redirect-uri-template=https://my-redirect-uri.com
+	spring.security.oauth2.client.registration.my-client-1.redirect-uri=https://my-redirect-uri.com
 	spring.security.oauth2.client.registration.my-client-1.client-authentication-method=basic
 	spring.security.oauth2.client.registration.my-client-1.authorization-grant-type=authorization_code
 
@@ -2922,7 +2932,7 @@ You can register multiple OAuth2 clients and providers under the `spring.securit
 	spring.security.oauth2.client.registration.my-client-2.client-name=Client for email scope
 	spring.security.oauth2.client.registration.my-client-2.provider=my-oauth-provider
 	spring.security.oauth2.client.registration.my-client-2.scope=email
-	spring.security.oauth2.client.registration.my-client-2.redirect-uri-template=https://my-redirect-uri.com
+	spring.security.oauth2.client.registration.my-client-2.redirect-uri=https://my-redirect-uri.com
 	spring.security.oauth2.client.registration.my-client-2.client-authentication-method=basic
 	spring.security.oauth2.client.registration.my-client-2.authorization-grant-type=authorization_code
 
@@ -3140,7 +3150,7 @@ These are the standard options that work regardless of the actual implementation
 It is also possible to fine-tune implementation-specific settings by using their respective prefix (`+spring.datasource.hikari.*+`, `+spring.datasource.tomcat.*+`, and `+spring.datasource.dbcp2.*+`).
 Refer to the documentation of the connection pool implementation you are using for more details.
 
-For instance, if you use the https://tomcat.apache.org/tomcat-8.0-doc/jdbc-pool.html#Common_Attributes[Tomcat connection pool], you could customize many additional settings, as shown in the following example:
+For instance, if you use the {tomcat-docs}/jdbc-pool.html#Common_Attributes[Tomcat connection pool], you could customize many additional settings, as shown in the following example:
 
 [source,properties,indent=0]
 ----
@@ -3484,6 +3494,7 @@ You can define beans for the following jOOQ Types:
 * `TransactionProvider`
 * `RecordMapperProvider`
 * `RecordUnmapperProvider`
+* `Settings`
 * `RecordListenerProvider`
 * `ExecuteListenerProvider`
 * `VisitListenerProvider`
@@ -4755,6 +4766,13 @@ For example, you might declare the following section in `application.properties`
 	spring.rabbitmq.password=secret
 ----
 
+Alternatively, you could configure the same connection using the `addresses` attributes:
+
+[source,properties,indent=0]
+----
+	spring.rabbitmq.addresses=amqp://admin:secret@localhost
+----
+
 If a `ConnectionNameStrategy` bean exists in the context, it will be automatically used to name connections created by the auto-configured `ConnectionFactory`.
 See {spring-boot-autoconfigure-module-code}/amqp/RabbitProperties.java[`RabbitProperties`] for more of the supported options.
 
@@ -5780,6 +5798,11 @@ We recommend using a `@Bean` method to create and configure the mock in this sit
 
 Additionally, you can use `@SpyBean` to wrap any existing bean with a Mockito `spy`.
 See the {spring-boot-test-module-api}/mock/mockito/SpyBean.html[Javadoc] for full details.
+
+NOTE: CGLib proxies, such as those created for scoped beans, declare the proxied methods as `final`.
+This stops Mockito from functioning correctly as it cannot mock or spy on `final` methods in its default configuration.
+If you want to mock or spy on such a bean, configure Mockito to use its inline mock maker by adding `org.mockito:mockito-inline` to your application's test dependencies.
+This allows Mockito to mock and spy on `final` methods.
 
 NOTE: While Spring's test framework caches application contexts between tests and reuses a context for tests sharing the same configuration, the use of `@MockBean` or `@SpyBean` influences the cache key, which will most likely increase the number of contexts.
 

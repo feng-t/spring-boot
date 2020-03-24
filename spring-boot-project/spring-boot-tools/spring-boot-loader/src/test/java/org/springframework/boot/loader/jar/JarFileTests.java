@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,12 @@ import java.io.InputStream;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.Charset;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.Enumeration;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
+import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -39,6 +42,7 @@ import org.junit.rules.TemporaryFolder;
 
 import org.springframework.boot.loader.TestJarCreator;
 import org.springframework.boot.loader.data.RandomAccessDataFile;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.FileCopyUtils;
 import org.springframework.util.StreamUtils;
 
@@ -54,6 +58,7 @@ import static org.mockito.Mockito.verify;
  * @author Phillip Webb
  * @author Martin Lau
  * @author Andy Wilkinson
+ * @author Madhura Bhave
  */
 public class JarFileTests {
 
@@ -491,6 +496,27 @@ public class JarFileTests {
 		InputStream inputStream = multiRelease.getInputStream(entry);
 		assertThat(inputStream.available()).isEqualTo(1);
 		assertThat(inputStream.read()).isEqualTo(getJavaVersion());
+	}
+
+	@Test
+	public void jarFileEntryWithEpochTimeOfZeroShouldNotFail() throws Exception {
+		File file = this.temporaryFolder.newFile();
+		FileOutputStream fileOutputStream = new FileOutputStream(file);
+		try (JarOutputStream jarOutputStream = new JarOutputStream(fileOutputStream)) {
+			jarOutputStream.setComment("outer");
+			JarEntry entry = new JarEntry("1.dat");
+			entry.setLastModifiedTime(FileTime.from(Instant.EPOCH));
+			ReflectionTestUtils.setField(entry, "xdostime", 0);
+			jarOutputStream.putNextEntry(entry);
+			jarOutputStream.write(new byte[] { (byte) 1 });
+			jarOutputStream.closeEntry();
+		}
+		try (JarFile jar = new JarFile(file)) {
+			Enumeration<java.util.jar.JarEntry> entries = jar.entries();
+			JarEntry entry = entries.nextElement();
+			assertThat(entry.getLastModifiedTime().toInstant()).isEqualTo(Instant.EPOCH);
+			assertThat(entry.getName()).isEqualTo("1.dat");
+		}
 	}
 
 	private int getJavaVersion() {

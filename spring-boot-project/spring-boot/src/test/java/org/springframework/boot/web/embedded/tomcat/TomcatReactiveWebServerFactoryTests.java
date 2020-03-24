@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.springframework.boot.web.embedded.tomcat;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.catalina.Context;
 import org.apache.catalina.LifecycleEvent;
@@ -26,15 +27,19 @@ import org.apache.catalina.core.AprLifecycleListener;
 import org.apache.catalina.core.StandardContext;
 import org.apache.catalina.startup.Tomcat;
 import org.apache.catalina.valves.RemoteIpValve;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
+import org.springframework.boot.web.reactive.server.AbstractReactiveWebServerFactory;
 import org.springframework.boot.web.reactive.server.AbstractReactiveWebServerFactoryTests;
+import org.springframework.boot.web.server.Ssl;
 import org.springframework.http.server.reactive.HttpHandler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -153,6 +158,46 @@ public class TomcatReactiveWebServerFactoryTests extends AbstractReactiveWebServ
 		assertThat(context.getClearReferencesObjectStreamClassCaches()).isFalse();
 		assertThat(context.getClearReferencesRmiTargets()).isFalse();
 		assertThat(context.getClearReferencesThreadLocals()).isFalse();
+	}
+
+	@Test
+	@Ignore("gh-19702")
+	public void compressionOfResponseToGetRequest() {
+	}
+
+	@Test
+	@Ignore("gh-19702")
+	public void compressionOfResponseToPostRequest() {
+	}
+
+	@Test
+	@Override
+	public void sslWithInvalidAliasFailsDuringStartup() {
+		String keyStore = "classpath:test.jks";
+		String keyPassword = "password";
+		AbstractReactiveWebServerFactory factory = getFactory();
+		Ssl ssl = new Ssl();
+		ssl.setKeyStore(keyStore);
+		ssl.setKeyPassword(keyPassword);
+		ssl.setKeyAlias("test-alias-404");
+		factory.setSsl(ssl);
+		assertThatThrownBy(() -> factory.getWebServer(new EchoHandler()).start())
+				.isInstanceOf(ConnectorStartFailedException.class);
+	}
+
+	@Test
+	public void whenGetTomcatWebServerIsOverriddenThenWebServerCreationCanBeCustomized() {
+		AtomicReference<TomcatWebServer> webServerReference = new AtomicReference<>();
+		TomcatWebServer webServer = (TomcatWebServer) new TomcatReactiveWebServerFactory() {
+
+			@Override
+			protected TomcatWebServer getTomcatWebServer(Tomcat tomcat) {
+				webServerReference.set(new TomcatWebServer(tomcat));
+				return webServerReference.get();
+			}
+
+		}.getWebServer(new EchoHandler());
+		assertThat(webServerReference).hasValue(webServer);
 	}
 
 }

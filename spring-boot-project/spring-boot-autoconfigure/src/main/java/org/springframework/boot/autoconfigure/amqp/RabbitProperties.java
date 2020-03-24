@@ -188,7 +188,7 @@ public class RabbitProperties {
 	private List<Address> parseAddresses(String addresses) {
 		List<Address> parsedAddresses = new ArrayList<>();
 		for (String address : StringUtils.commaDelimitedListToStringArray(addresses)) {
-			parsedAddresses.add(new Address(address));
+			parsedAddresses.add(new Address(address, getSsl().isEnabled()));
 		}
 		return parsedAddresses;
 	}
@@ -310,7 +310,7 @@ public class RabbitProperties {
 		return this.template;
 	}
 
-	public static class Ssl {
+	public class Ssl {
 
 		/**
 		 * Whether to enable SSL support.
@@ -364,6 +364,21 @@ public class RabbitProperties {
 
 		public boolean isEnabled() {
 			return this.enabled;
+		}
+
+		/**
+		 * Returns whether SSL is enabled from the first address, or the configured ssl
+		 * enabled flag if no addresses have been set.
+		 * @return whether ssl is enabled
+		 * @see #setAddresses(String)
+		 * @see #isEnabled()
+		 */
+		public boolean determineEnabled() {
+			if (CollectionUtils.isEmpty(RabbitProperties.this.parsedAddresses)) {
+				return isEnabled();
+			}
+			Address address = RabbitProperties.this.parsedAddresses.get(0);
+			return address.determineSslEnabled(isEnabled());
 		}
 
 		public void setEnabled(boolean enabled) {
@@ -937,6 +952,10 @@ public class RabbitProperties {
 
 		private static final int DEFAULT_PORT = 5672;
 
+		private static final String PREFIX_AMQP_SECURE = "amqps://";
+
+		private static final int DEFAULT_PORT_SECURE = 5671;
+
 		private String host;
 
 		private int port;
@@ -947,17 +966,24 @@ public class RabbitProperties {
 
 		private String virtualHost;
 
-		private Address(String input) {
+		private Boolean secureConnection;
+
+		private Address(String input, boolean sslEnabled) {
 			input = input.trim();
 			input = trimPrefix(input);
 			input = parseUsernameAndPassword(input);
 			input = parseVirtualHost(input);
-			parseHostAndPort(input);
+			parseHostAndPort(input, sslEnabled);
 		}
 
 		private String trimPrefix(String input) {
+			if (input.startsWith(PREFIX_AMQP_SECURE)) {
+				this.secureConnection = true;
+				return input.substring(PREFIX_AMQP_SECURE.length());
+			}
 			if (input.startsWith(PREFIX_AMQP)) {
-				input = input.substring(PREFIX_AMQP.length());
+				this.secureConnection = false;
+				return input.substring(PREFIX_AMQP.length());
 			}
 			return input;
 		}
@@ -988,16 +1014,20 @@ public class RabbitProperties {
 			return input;
 		}
 
-		private void parseHostAndPort(String input) {
+		private void parseHostAndPort(String input, boolean sslEnabled) {
 			int portIndex = input.indexOf(':');
 			if (portIndex == -1) {
 				this.host = input;
-				this.port = DEFAULT_PORT;
+				this.port = (determineSslEnabled(sslEnabled)) ? DEFAULT_PORT_SECURE : DEFAULT_PORT;
 			}
 			else {
 				this.host = input.substring(0, portIndex);
 				this.port = Integer.valueOf(input.substring(portIndex + 1));
 			}
+		}
+
+		private boolean determineSslEnabled(boolean sslEnabled) {
+			return (this.secureConnection != null) ? this.secureConnection : sslEnabled;
 		}
 
 	}

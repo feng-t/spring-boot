@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package org.springframework.boot.web.embedded.tomcat;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -54,7 +53,6 @@ import org.apache.catalina.core.StandardWrapper;
 import org.apache.catalina.startup.Tomcat;
 import org.apache.catalina.util.CharsetMapper;
 import org.apache.catalina.valves.RemoteIpValve;
-import org.apache.catalina.webresources.TomcatURLStreamHandlerFactory;
 import org.apache.jasper.servlet.JspServlet;
 import org.apache.tomcat.JarScanFilter;
 import org.apache.tomcat.JarScanType;
@@ -65,8 +63,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import org.springframework.boot.testsupport.rule.OutputCapture;
+import org.springframework.boot.testsupport.web.servlet.ExampleServlet;
+import org.springframework.boot.web.server.Ssl;
 import org.springframework.boot.web.server.WebServerException;
 import org.springframework.boot.web.servlet.ServletContextInitializer;
+import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.boot.web.servlet.server.AbstractServletWebServerFactory;
 import org.springframework.boot.web.servlet.server.AbstractServletWebServerFactoryTests;
 import org.springframework.core.io.ByteArrayResource;
@@ -75,7 +76,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.FileSystemUtils;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -84,6 +84,7 @@ import org.springframework.web.client.RestTemplate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -108,8 +109,6 @@ public class TomcatServletWebServerFactoryTests extends AbstractServletWebServer
 
 	@After
 	public void restoreTccl() {
-		ReflectionTestUtils.setField(TomcatURLStreamHandlerFactory.class, "instance", null);
-		ReflectionTestUtils.setField(URL.class, "factory", null);
 		Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
 	}
 
@@ -288,7 +287,7 @@ public class TomcatServletWebServerFactoryTests extends AbstractServletWebServer
 	}
 
 	@Test
-	public void primaryConnectorPortClashThrowsWebServerException() throws IOException {
+	public void primaryConnectorPortClashThrowsWebServerException() throws Exception {
 		doWithBlockedPort((port) -> {
 			TomcatServletWebServerFactory factory = getFactory();
 			factory.setPort(port);
@@ -300,7 +299,7 @@ public class TomcatServletWebServerFactoryTests extends AbstractServletWebServer
 	}
 
 	@Test
-	public void startupFailureDoesNotResultInUnstoppedThreadsBeingReported() throws IOException {
+	public void startupFailureDoesNotResultInUnstoppedThreadsBeingReported() throws Exception {
 		super.portClashOfPrimaryConnectorResultsInPortInUseException();
 		String string = this.outputCapture.toString();
 		assertThat(string).doesNotContain("appears to have started a thread named [main]");
@@ -532,6 +531,18 @@ public class TomcatServletWebServerFactoryTests extends AbstractServletWebServer
 		});
 		this.webServer = factory.getWebServer();
 		this.webServer.start();
+	}
+
+	@Test
+	@Override
+	public void sslWithInvalidAliasFailsDuringStartup() {
+		AbstractServletWebServerFactory factory = getFactory();
+		Ssl ssl = getSsl(null, "password", "test-alias-404", "src/test/resources/test.jks");
+		factory.setSsl(ssl);
+		ServletRegistrationBean<ExampleServlet> registration = new ServletRegistrationBean<>(
+				new ExampleServlet(true, false), "/hello");
+		assertThatThrownBy(() -> factory.getWebServer(registration).start())
+				.isInstanceOf(ConnectorStartFailedException.class);
 	}
 
 	@Override

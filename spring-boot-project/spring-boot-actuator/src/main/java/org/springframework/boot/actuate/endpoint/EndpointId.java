@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,9 +27,9 @@ import org.apache.commons.logging.LogFactory;
 import org.springframework.util.Assert;
 
 /**
- * An identifier for an actuator endpoint. Endpoint IDs may contain only letters, numbers
- * {@code '.'} and {@code '-'}. They must begin with a lower-case letter. Case and syntax
- * characters are ignored when comparing endpoint IDs.
+ * An identifier for an actuator endpoint. Endpoint IDs may contain only letters and
+ * numbers. They must begin with a lower-case letter. Case and syntax characters are
+ * ignored when comparing endpoint IDs.
  *
  * @author Phillip Webb
  * @since 2.0.6
@@ -40,9 +40,9 @@ public final class EndpointId {
 
 	private static Set<String> loggedWarnings = new HashSet<>();
 
-	private static final Pattern VALID_PATTERN = Pattern.compile("[a-zA-Z0-9\\.\\-]+");
+	private static final Pattern VALID_PATTERN = Pattern.compile("[a-zA-Z0-9.-]+");
 
-	private static final Pattern WARNING_PATTERN = Pattern.compile("[\\.\\-]+");
+	private static final Pattern WARNING_PATTERN = Pattern.compile("[.-]+");
 
 	private final String value;
 
