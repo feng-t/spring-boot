@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -380,16 +380,15 @@ class WebMvcAutoConfigurationTests {
 
 	@Test
 	void defaultAsyncRequestTimeout() {
-		this.contextRunner.run((context) -> assertThat(ReflectionTestUtils
-				.getField(context.getBean(RequestMappingHandlerAdapter.class), "asyncRequestTimeout")).isNull());
+		this.contextRunner.run((context) -> assertThat(context.getBean(RequestMappingHandlerAdapter.class))
+				.extracting("asyncRequestTimeout").isNull());
 	}
 
 	@Test
 	void customAsyncRequestTimeout() {
 		this.contextRunner.withPropertyValues("spring.mvc.async.request-timeout:12345")
-				.run((context) -> assertThat(ReflectionTestUtils
-						.getField(context.getBean(RequestMappingHandlerAdapter.class), "asyncRequestTimeout"))
-								.isEqualTo(12345L));
+				.run((context) -> assertThat(context.getBean(RequestMappingHandlerAdapter.class))
+						.extracting("asyncRequestTimeout").isEqualTo(12345L));
 	}
 
 	@Test
@@ -397,8 +396,8 @@ class WebMvcAutoConfigurationTests {
 		this.contextRunner.withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
 				.run((context) -> {
 					assertThat(context).hasSingleBean(AsyncTaskExecutor.class);
-					assertThat(ReflectionTestUtils.getField(context.getBean(RequestMappingHandlerAdapter.class),
-							"taskExecutor")).isSameAs(context.getBean("applicationTaskExecutor"));
+					assertThat(context.getBean(RequestMappingHandlerAdapter.class)).extracting("taskExecutor")
+							.isSameAs(context.getBean("applicationTaskExecutor"));
 				});
 	}
 
@@ -407,8 +406,8 @@ class WebMvcAutoConfigurationTests {
 		this.contextRunner.withUserConfiguration(CustomApplicationTaskExecutorConfig.class)
 				.withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class)).run((context) -> {
 					assertThat(context).doesNotHaveBean(AsyncTaskExecutor.class);
-					assertThat(ReflectionTestUtils.getField(context.getBean(RequestMappingHandlerAdapter.class),
-							"taskExecutor")).isNotSameAs(context.getBean("applicationTaskExecutor"));
+					assertThat(context.getBean(RequestMappingHandlerAdapter.class)).extracting("taskExecutor")
+							.isNotSameAs(context.getBean("applicationTaskExecutor"));
 				});
 	}
 
@@ -416,9 +415,9 @@ class WebMvcAutoConfigurationTests {
 	void asyncTaskExecutorWithMvcConfigurerCanOverrideExecutor() {
 		this.contextRunner.withUserConfiguration(CustomAsyncTaskExecutorConfigurer.class)
 				.withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
-				.run((context) -> assertThat(ReflectionTestUtils
-						.getField(context.getBean(RequestMappingHandlerAdapter.class), "taskExecutor"))
-								.isSameAs(context.getBean(CustomAsyncTaskExecutorConfigurer.class).taskExecutor));
+				.run((context) -> assertThat(context.getBean(RequestMappingHandlerAdapter.class))
+						.extracting("taskExecutor")
+						.isSameAs(context.getBean(CustomAsyncTaskExecutorConfigurer.class).taskExecutor));
 	}
 
 	@Test
@@ -426,8 +425,8 @@ class WebMvcAutoConfigurationTests {
 		this.contextRunner.withUserConfiguration(CustomAsyncTaskExecutorConfig.class)
 				.withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class)).run((context) -> {
 					assertThat(context).hasSingleBean(AsyncTaskExecutor.class);
-					assertThat(ReflectionTestUtils.getField(context.getBean(RequestMappingHandlerAdapter.class),
-							"taskExecutor")).isNotSameAs(context.getBean("customTaskExecutor"));
+					assertThat(context.getBean(RequestMappingHandlerAdapter.class)).extracting("taskExecutor")
+							.isNotSameAs(context.getBean("customTaskExecutor"));
 				});
 	}
 
@@ -564,13 +563,29 @@ class WebMvcAutoConfigurationTests {
 	}
 
 	@Test
-	void validatorWithConfigurerShouldUseSpringValidator() {
+	void validatorWithConfigurerAloneShouldUseSpringValidator() {
 		this.contextRunner.withUserConfiguration(MvcValidator.class).run((context) -> {
 			assertThat(context).doesNotHaveBean(ValidatorFactory.class);
 			assertThat(context).doesNotHaveBean(javax.validation.Validator.class);
 			assertThat(context).getBeanNames(Validator.class).containsOnly("mvcValidator");
-			assertThat(context.getBean("mvcValidator")).isSameAs(context.getBean(MvcValidator.class).validator);
+			Validator expectedValidator = context.getBean(MvcValidator.class).validator;
+			assertThat(context.getBean("mvcValidator")).isSameAs(expectedValidator);
+			assertThat(context.getBean(RequestMappingHandlerAdapter.class).getWebBindingInitializer())
+					.hasFieldOrPropertyWithValue("validator", expectedValidator);
 		});
+	}
+
+	@Test
+	void validatorWithConfigurerShouldUseSpringValidator() {
+		this.contextRunner.withConfiguration(AutoConfigurations.of(ValidationAutoConfiguration.class))
+				.withUserConfiguration(MvcValidator.class).run((context) -> {
+					assertThat(context).getBeanNames(javax.validation.Validator.class).containsOnly("defaultValidator");
+					assertThat(context).getBeanNames(Validator.class).containsOnly("defaultValidator", "mvcValidator");
+					Validator expectedValidator = context.getBean(MvcValidator.class).validator;
+					assertThat(context.getBean("mvcValidator")).isSameAs(expectedValidator);
+					assertThat(context.getBean(RequestMappingHandlerAdapter.class).getWebBindingInitializer())
+							.hasFieldOrPropertyWithValue("validator", expectedValidator);
+				});
 	}
 
 	@Test
@@ -627,8 +642,7 @@ class WebMvcAutoConfigurationTests {
 					Validator validator = context.getBean(Validator.class);
 					assertThat(validator).isInstanceOf(ValidatorAdapter.class);
 					Validator target = ((ValidatorAdapter) validator).getTarget();
-					assertThat(ReflectionTestUtils.getField(target, "targetValidator"))
-							.isSameAs(context.getBean("customJsr303Validator"));
+					assertThat(target).extracting("targetValidator").isSameAs(context.getBean("customJsr303Validator"));
 				});
 	}
 

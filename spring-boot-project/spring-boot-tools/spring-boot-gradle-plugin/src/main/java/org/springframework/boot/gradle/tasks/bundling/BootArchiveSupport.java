@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 the original author or authors.
+ * Copyright 2012-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,9 +93,10 @@ class BootArchiveSupport {
 	}
 
 	CopyAction createCopyAction(Jar jar) {
-		CopyAction copyAction = new BootZipCopyAction(jar.getArchivePath(), jar.isPreserveFileTimestamps(),
-				isUsingDefaultLoader(jar), this.requiresUnpack.getAsSpec(), this.exclusions.getAsExcludeSpec(),
-				this.launchScript, this.compressionResolver, jar.getMetadataCharset());
+		CopyAction copyAction = new BootZipCopyAction(jar.getArchiveFile().get().getAsFile(),
+				jar.isPreserveFileTimestamps(), isUsingDefaultLoader(jar), this.requiresUnpack.getAsSpec(),
+				this.exclusions.getAsExcludeSpec(), this.launchScript, this.compressionResolver,
+				jar.getMetadataCharset());
 		if (!jar.isReproducibleFileOrder()) {
 			return copyAction;
 		}
